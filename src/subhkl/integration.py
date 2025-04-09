@@ -5,6 +5,7 @@ from PIL import Image
 import skimage.feature
 import scipy.optimize
 
+
 class FindPeaks:
 
     def __init__(self, filename):
@@ -40,11 +41,11 @@ class FindPeaks:
 
         """
 
-        coords = skimage.feature.peak_local_max(self.im,
-                                                min_distance=min_pix,
-                                                threshold_rel=min_rel_intens)
+        coords = skimage.feature.peak_local_max(
+            self.im, min_distance=min_pix, threshold_rel=min_rel_intens
+        )
 
-        return coords[:,1], coords[:,0]
+        return coords[:, 1], coords[:, 0]
 
     def scale_coordinates(self, xp, yp, scale_x, scale_y):
         """
@@ -66,7 +67,7 @@ class FindPeaks:
 
         ny, nx = self.im.shape
 
-        return (xp-nx/2)*scale_x, (yp-ny/2)*scale_y
+        return (xp - nx / 2) * scale_x, (yp - ny / 2) * scale_y
 
     def scale_ellipsoid(self, a, b, theta, scale_x, scale_y):
         """
@@ -88,21 +89,20 @@ class FindPeaks:
 
         """
 
-        R = np.array([[np.cos(theta), -np.sin(theta)],
-                      [np.sin(theta), np.cos(theta)]])
+        R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
 
-        S_inv = np.diag([1/scale_x, 1/scale_y])
+        S_inv = np.diag([1 / scale_x, 1 / scale_y])
 
-        A =  R.T @ np.diag([1/a**2, 1/b**2]) @ R
+        A = R.T @ np.diag([1 / a**2, 1 / b**2]) @ R
 
         A_new = S_inv.T @ A @ S_inv
 
         eigvals, eigvecs = np.linalg.eigh(A_new)
 
-        new_a = 1/np.sqrt(eigvals[0])
-        new_b = 1/np.sqrt(eigvals[1])
+        new_a = 1 / np.sqrt(eigvals[0])
+        new_b = 1 / np.sqrt(eigvals[1])
 
-        new_theta = np.arctan2(eigvecs[1,0], eigvecs[0,0])
+        new_theta = np.arctan2(eigvecs[1, 0], eigvecs[0, 0])
 
         return new_a, new_b, new_theta
 
@@ -128,9 +128,9 @@ class FindPeaks:
 
         """
 
-        X = x*np.cos(gamma)+d*np.sin(gamma)
-        Y = y+h
-        Z = d*np.cos(gamma)-x*np.sin(gamma)
+        X = x * np.cos(gamma) + d * np.sin(gamma)
+        Y = y + h
+        Z = d * np.cos(gamma) - x * np.sin(gamma)
 
         return X, Y, Z
 
@@ -156,13 +156,13 @@ class FindPeaks:
 
         """
 
-        X = d*np.sin(x/d)
-        Y = y+h
-        Z = d*np.cos(x/d)
+        X = d * np.sin(x / d)
+        Y = y + h
+        Z = d * np.cos(x / d)
 
         return X, Y, Z
 
-    def detector_trajectories(self, x, y, d, h, gamma, panel='curved'):
+    def detector_trajectories(self, x, y, d, h, gamma, panel="curved"):
         """
         Calculate detector trajectories.
 
@@ -186,36 +186,38 @@ class FindPeaks:
 
         """
 
-        if panel == 'curved':
+        if panel == "curved":
             X, Y, Z = self.curved_panel(x, y, d, h, gamma)
         else:
             X, Y, Z = self.flat_panel(x, y, d, h, gamma)
 
-        R = np.sqrt(X**2+Y**2+Z**2)
-        two_theta = np.rad2deg(np.arccos(Z/R))
+        R = np.sqrt(X**2 + Y**2 + Z**2)
+        two_theta = np.rad2deg(np.arccos(Z / R))
         az_phi = np.rad2deg(np.arctan2(Y, X))
 
         return two_theta, az_phi
 
     def peak(self, x, y, A, B, mu_x, mu_y, sigma_1, sigma_2, theta):
 
-        a = 0.5*(np.cos(theta)**2/sigma_1**2+np.sin(theta)**2/sigma_2**2)
-        b = 0.5*(np.sin(theta)**2/sigma_1**2+np.cos(theta)**2/sigma_2**2)
-        c = 0.5*(1/sigma_1**2-1/sigma_2**2)*np.sin(2*theta)
+        a = 0.5 * (np.cos(theta) ** 2 / sigma_1**2 + np.sin(theta) ** 2 / sigma_2**2)
+        b = 0.5 * (np.sin(theta) ** 2 / sigma_1**2 + np.cos(theta) ** 2 / sigma_2**2)
+        c = 0.5 * (1 / sigma_1**2 - 1 / sigma_2**2) * np.sin(2 * theta)
 
-        shape = np.exp(-(a*(x-mu_x)**2+b*(y-mu_y)**2+c*(x-mu_x)*(y-mu_y)))
+        shape = np.exp(
+            -(a * (x - mu_x) ** 2 + b * (y - mu_y) ** 2 + c * (x - mu_x) * (y - mu_y))
+        )
 
-        return A*shape+B # /(2*np.pi*sigma_1*sigma_2)
+        return A * shape + B  # /(2*np.pi*sigma_1*sigma_2)
 
     def residual(self, params, x, y, z):
 
-        return (self.peak(x, y, *params)-z).flatten()
+        return (self.peak(x, y, *params) - z).flatten()
 
     def transform_ellipsoid(self, sigma_1, sigma_2, theta):
 
-        sigma_x = np.hypot(sigma_1*np.cos(theta), sigma_2*np.sin(theta))
-        sigma_y = np.hypot(sigma_1*np.sin(theta), sigma_2*np.cos(theta))
-        rho = (sigma_1**2-sigma_2**2)*np.sin(2*theta)/(2*sigma_x*sigma_y)
+        sigma_x = np.hypot(sigma_1 * np.cos(theta), sigma_2 * np.sin(theta))
+        sigma_y = np.hypot(sigma_1 * np.sin(theta), sigma_2 * np.cos(theta))
+        rho = (sigma_1**2 - sigma_2**2) * np.sin(2 * theta) / (2 * sigma_x * sigma_y)
 
         return sigma_x, sigma_y, rho
 
@@ -223,43 +225,59 @@ class FindPeaks:
 
         peak_dict = {}
 
-        Y, X = np.meshgrid(np.arange(im.shape[0]),
-                           np.arange(im.shape[1]),
-                           indexing='ij')
-
+        Y, X = np.meshgrid(
+            np.arange(im.shape[0]), np.arange(im.shape[1]), indexing="ij"
+        )
 
         for ind, (x_val, y_val) in enumerate(zip(xp[:], yp[:])):
 
-            y_min = int(max(y_val-roi_pixels, 0))
-            y_max = int(min(y_val+roi_pixels+1, im.shape[0]))
-            x_min = int(max(x_val-roi_pixels, 0))
-            x_max = int(min(x_val+roi_pixels+1, im.shape[1]))
+            y_min = int(max(y_val - roi_pixels, 0))
+            y_max = int(min(y_val + roi_pixels + 1, im.shape[0]))
+            x_min = int(max(x_val - roi_pixels, 0))
+            x_max = int(min(x_val + roi_pixels + 1, im.shape[1]))
 
             x = X[y_min:y_max, x_min:x_max].copy()
             y = Y[y_min:y_max, x_min:x_max].copy()
 
             z = im[y_min:y_max, x_min:x_max].copy()
 
-            x0 = (z.max(), z.min(),
-                  x_val, y_val,
-                  roi_pixels*0.25, roi_pixels*0.25, 0)
+            x0 = (
+                z.max(),
+                z.min(),
+                x_val,
+                y_val,
+                roi_pixels * 0.25,
+                roi_pixels * 0.25,
+                0,
+            )
 
-            xmin = (z.min(), 0,
-                    x_val-roi_pixels*0.5, y_val-roi_pixels*0.5,
-                    1, 1, -np.pi/2)
+            xmin = (
+                z.min(),
+                0,
+                x_val - roi_pixels * 0.5,
+                y_val - roi_pixels * 0.5,
+                1,
+                1,
+                -np.pi / 2,
+            )
 
-            xmax = (2*z.max(), z.mean(),
-                    x_val+roi_pixels*0.5, y_val+roi_pixels*0.5,
-                    roi_pixels, roi_pixels, np.pi/2)
+            xmax = (
+                2 * z.max(),
+                z.mean(),
+                x_val + roi_pixels * 0.5,
+                y_val + roi_pixels * 0.5,
+                roi_pixels,
+                roi_pixels,
+                np.pi / 2,
+            )
 
             bounds = np.array([xmin, xmax])
 
             args = (x, y, z)
 
-            sol = scipy.optimize.least_squares(self.residual,
-                                               x0=x0,
-                                               bounds=bounds,
-                                               args=args)
+            sol = scipy.optimize.least_squares(
+                self.residual, x0=x0, bounds=bounds, args=args
+            )
 
             J = sol.jac
             inv_cov = J.T.dot(J)

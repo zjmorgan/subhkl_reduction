@@ -1,5 +1,6 @@
 import os
-os.environ['OMP_NUM_THREADS'] = '1'
+
+os.environ["OMP_NUM_THREADS"] = "1"
 
 import h5py
 
@@ -10,6 +11,7 @@ import numpy as np
 import scipy.linalg
 import scipy.spatial
 import scipy.interpolate
+
 
 class FindUB:
     """
@@ -39,9 +41,9 @@ class FindUB:
             self.load_peaks(filename)
 
         t = np.linspace(0, np.pi, 1024)
-        cdf = (t-np.sin(t))/np.pi
+        cdf = (t - np.sin(t)) / np.pi
 
-        self._angle = scipy.interpolate.interp1d(cdf, t, kind='linear')
+        self._angle = scipy.interpolate.interp1d(cdf, t, kind="linear")
 
     def load_peaks(self, filename):
         """
@@ -54,20 +56,20 @@ class FindUB:
 
         """
 
-        with h5py.File(os.path.abspath(filename), 'r') as f:
+        with h5py.File(os.path.abspath(filename), "r") as f:
 
-            self.a = f['sample/a'][()]
-            self.b = f['sample/b'][()]
-            self.c = f['sample/c'][()]
-            self.alpha = f['sample/alpha'][()]
-            self.beta = f['sample/beta'][()]
-            self.gamma = f['sample/gamma'][()]
-            self.wavelength = f['instrument/wavelength'][()]
-            self.R = f['goniometer/R'][()]
-            self.two_theta = f['peaks/scattering'][()]
-            self.az_phi = f['peaks/azimuthal'][()]
-            self.centering = f['sample/centering'][()].decode('utf-8')
-            self.cell = f['sample/cell'][()].decode('utf-8')
+            self.a = f["sample/a"][()]
+            self.b = f["sample/b"][()]
+            self.c = f["sample/c"][()]
+            self.alpha = f["sample/alpha"][()]
+            self.beta = f["sample/beta"][()]
+            self.gamma = f["sample/gamma"][()]
+            self.wavelength = f["instrument/wavelength"][()]
+            self.R = f["goniometer/R"][()]
+            self.two_theta = f["peaks/scattering"][()]
+            self.az_phi = f["peaks/azimuthal"][()]
+            self.centering = f["sample/centering"][()].decode("utf-8")
+            self.cell = f["sample/cell"][()].decode("utf-8")
 
     def uncertainty_line_segements(self):
         """
@@ -83,9 +85,9 @@ class FindUB:
         tt = np.deg2rad(self.two_theta)
         az = np.deg2rad(self.az_phi)
 
-        kf_ki_dir = np.array([np.sin(tt)*np.cos(az),
-                              np.sin(tt)*np.sin(az),
-                              np.cos(tt)-1])
+        kf_ki_dir = np.array(
+            [np.sin(tt) * np.cos(az), np.sin(tt) * np.sin(az), np.cos(tt) - 1]
+        )
 
         return kf_ki_dir
 
@@ -107,13 +109,11 @@ class FindUB:
         g11 = self.a**2
         g22 = self.b**2
         g33 = self.c**2
-        g12 = self.a*self.b*np.cos(gamma)
-        g13 = self.c*self.a*np.cos(beta)
-        g23 = self.b*self.c*np.cos(alpha)
+        g12 = self.a * self.b * np.cos(gamma)
+        g13 = self.c * self.a * np.cos(beta)
+        g23 = self.b * self.c * np.cos(alpha)
 
-        G = np.array([[g11, g12, g13],
-                      [g12, g22, g23],
-                      [g13, g23, g33]])
+        G = np.array([[g11, g12, g13], [g12, g22, g23], [g13, g23, g33]])
 
         return G
 
@@ -161,16 +161,16 @@ class FindUB:
 
         """
 
-        theta = np.arccos(1-2*u0)
-        phi = 2*np.pi*u1
+        theta = np.arccos(1 - 2 * u0)
+        phi = 2 * np.pi * u1
 
-        w = np.array([np.sin(theta)*np.cos(phi),
-                      np.sin(theta)*np.sin(phi),
-                      np.cos(theta)])
+        w = np.array(
+            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+        )
 
         omega = self._angle(u2)
 
-        U = scipy.spatial.transform.Rotation.from_rotvec(omega*w).as_matrix()
+        U = scipy.spatial.transform.Rotation.from_rotvec(omega * w).as_matrix()
 
         return U
 
@@ -206,30 +206,30 @@ class FindUB:
 
         UB_inv = np.linalg.inv(UB)
 
-        hkl_lamda = np.einsum('ij,jk', UB_inv, kf_ki_dir)
+        hkl_lamda = np.einsum("ij,jk", UB_inv, kf_ki_dir)
 
         lamda = np.linspace(wl_min, wl_max, 100)
 
-        hkl = hkl_lamda[:,:,np.newaxis]/lamda
+        hkl = hkl_lamda[:, :, np.newaxis] / lamda
 
-        s = np.einsum('ij,j...->i...', UB, hkl)
+        s = np.einsum("ij,j...->i...", UB, hkl)
         s = np.linalg.norm(s, axis=0)
 
         int_hkl = np.round(hkl)
-        diff_hkl = hkl-int_hkl
+        diff_hkl = hkl - int_hkl
 
-        dist = np.einsum('ij,j...->i...', UB, diff_hkl)
+        dist = np.einsum("ij,j...->i...", UB, diff_hkl)
         dist = np.linalg.norm(dist, axis=0)
 
         ind = np.argmin(dist, axis=1)
-        err = dist[np.arange(dist.shape[0]),ind]
+        err = dist[np.arange(dist.shape[0]), ind]
 
-        hkl = hkl[:,np.arange(hkl_lamda.shape[1]),ind]
+        hkl = hkl[:, np.arange(hkl_lamda.shape[1]), ind]
         lamda = lamda[ind]
 
-        hkl = hkl_lamda/lamda
+        hkl = hkl_lamda / lamda
         int_hkl = np.round(hkl)
-        diff_hkl = hkl-int_hkl
+        diff_hkl = hkl - int_hkl
 
         mask = (np.abs(diff_hkl) < tol).all(axis=0)
 
@@ -311,10 +311,9 @@ class FindUB:
 
         params = np.reshape(x, (-1, 3))
 
-        compute_with_bounds = partial(self.cost,
-                                      B=B, 
-                                      kf_ki_dir=kf_ki_dir,
-                                      wavelength=wavelength)
+        compute_with_bounds = partial(
+            self.cost, B=B, kf_ki_dir=kf_ki_dir, wavelength=wavelength
+        )
 
         results = [compute_with_bounds(param) for param in params]
 
@@ -340,11 +339,13 @@ class FindUB:
 
         """
 
-        self.x = scipy.optimize.differential_evolution(self.objective,
-                                                        [(0,1), (0,1), (0,1)], 
-                                                        popsize=1000,
-                                                        updating='deferred',
-                                                        workers=-1).x
+        self.x = scipy.optimize.differential_evolution(
+            self.objective,
+            [(0, 1), (0, 1), (0, 1)],
+            popsize=1000,
+            updating="deferred",
+            workers=-1,
+        ).x
 
         kf_ki_dir = self.uncertainty_line_segements()
 
@@ -427,13 +428,13 @@ class FindUB:
 
         UB = np.dot(U, B)
 
-        d = 1/np.sqrt(np.einsum('ij,lj,li->l', Gstar, hkl, hkl))
+        d = 1 / np.sqrt(np.einsum("ij,lj,li->l", Gstar, hkl, hkl))
 
-        lamda = 2*d*sin_theta
+        lamda = 2 * d * sin_theta
         lamda[lamda < wavelength[0]] = wavelength[0]
         lamda[lamda > wavelength[1]] = wavelength[1]
 
-        vec = lamda*np.einsum('ij,lj->il', UB, hkl)-kf_ki_dir
+        vec = lamda * np.einsum("ij,lj->il", UB, hkl) - kf_ki_dir
 
         return vec.flatten()
 
@@ -452,7 +453,7 @@ class FindUB:
 
     def get_orientation_parameters(self):
 
-        return self.x 
+        return self.x
 
     def set_orientation_parameters(self, x):
 
@@ -460,9 +461,13 @@ class FindUB:
 
     def cartesian_matrix_metric_tensor(self, a, b, c, alpha, beta, gamma):
 
-        G = np.array([[a**2, a*b*np.cos(gamma), a*c*np.cos(beta)],
-                      [b*a*np.cos(gamma), b**2, b*c*np.cos(alpha)],
-                      [c*a*np.cos(beta), c*b*np.cos(alpha), c**2]])
+        G = np.array(
+            [
+                [a**2, a * b * np.cos(gamma), a * c * np.cos(beta)],
+                [b * a * np.cos(gamma), b**2, b * c * np.cos(alpha)],
+                [c * a * np.cos(beta), c * b * np.cos(alpha), c**2],
+            ]
+        )
 
         Gstar = np.linalg.inv(G)
 
@@ -478,21 +483,25 @@ class FindUB:
 
         a, b, c, alpha, beta, gamma = self.get_lattice_constants()
 
-        fun_dict = {'Cubic': self.cubic,
-                    'Rhombohedral': self.rhombohedral,
-                    'Tetragonal': self.tetragonal,
-                    'Hexagonal': self.hexagonal,
-                    'Orthorhombic': self.orthorhombic,
-                    'Monoclinic': self.monoclinic,
-                    'Triclinic': self.triclinic}
+        fun_dict = {
+            "Cubic": self.cubic,
+            "Rhombohedral": self.rhombohedral,
+            "Tetragonal": self.tetragonal,
+            "Hexagonal": self.hexagonal,
+            "Orthorhombic": self.orthorhombic,
+            "Monoclinic": self.monoclinic,
+            "Triclinic": self.triclinic,
+        }
 
-        x0_dict = {'Cubic': (a, ),
-                   'Rhombohedral': (a, alpha),
-                   'Tetragonal': (a, c),
-                   'Hexagonal': (a, c),
-                   'Orthorhombic': (a, b, c),
-                   'Monoclinic': (a, b, c, beta),
-                   'Triclinic': (a, b, c, alpha, beta, gamma)}
+        x0_dict = {
+            "Cubic": (a,),
+            "Rhombohedral": (a, alpha),
+            "Tetragonal": (a, c),
+            "Hexagonal": (a, c),
+            "Orthorhombic": (a, b, c),
+            "Monoclinic": (a, b, c, beta),
+            "Triclinic": (a, b, c, alpha, beta, gamma),
+        }
 
         fun = fun_dict[self.cell]
         x0 = x0_dict[self.cell]
@@ -504,22 +513,21 @@ class FindUB:
 
         wavelength = self.wavelength
         kf_ki_dir = self.uncertainty_line_segements()
-        sin_theta = np.sin(0.5*np.deg2rad(self.two_theta))
+        sin_theta = np.sin(0.5 * np.deg2rad(self.two_theta))
 
         *_, hkl, lamda = self.indexer(UB, kf_ki_dir, wavelength)
 
-        x_min = [(1-error)*constant for constant in x0]+[0,0,0]
-        x_max = [(1+error)*constant for constant in x0]+[1,1,1]
+        x_min = [(1 - error) * constant for constant in x0] + [0, 0, 0]
+        x_max = [(1 + error) * constant for constant in x0] + [1, 1, 1]
 
         bounds = np.array([x_min, x_max]).tolist()
 
         x0 += tuple(self.x)
         args = (sin_theta, kf_ki_dir, hkl, wavelength, fun)
 
-        sol = scipy.optimize.least_squares(self.residual,
-                                           x0=x0,
-                                           args=args,
-                                           bounds=bounds)
+        sol = scipy.optimize.least_squares(
+            self.residual, x0=x0, args=args, bounds=bounds
+        )
 
         a, b, c, alpha, beta, gamma, *self.x = fun(sol.x)
 
@@ -530,7 +538,7 @@ class FindUB:
         J = sol.jac
         cov = np.linalg.inv(J.T.dot(J))
 
-        chi2dof = np.sum(sol.fun**2)/(sol.fun.size-sol.x.size)
+        chi2dof = np.sum(sol.fun**2) / (sol.fun.size - sol.x.size)
         cov *= chi2dof
 
         sig = np.sqrt(np.diagonal(cov))
