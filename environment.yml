@@ -1,0 +1,16 @@
+name: subhkl
+channels:
+  - conda-forge
+  - mantid/label/nightly
+dependencies:
+  - python
+  - numpy
+  - scipy
+  - matplotlib
+  - pycifrw
+  - pyswarms
+  - h5py
+  - pytest
+  - pydata-sphinx-theme
+  - numpydoc
+  - mantidworkbench

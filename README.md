@@ -1,2 +1,2 @@
-# subhkl_reduction
-Quasi-Laue neutron data processing
+# subhkl
+Solving crystal orientation from Laue diffraction images
