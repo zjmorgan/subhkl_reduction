@@ -135,5 +135,5 @@ def generate_peaks(instrument, cif_file, wavelength_band=[2, 4], min_d=1):
         f["peaks/lambda"] = lamda
 
 
-generate_peaks("MANDI", "5vnq.cif", wavelength_band=[2, 4], min_d=6)
-generate_peaks("MANDI", "sucrose.cif", wavelength_band=[2, 4], min_d=1)
+#generate_peaks("MANDI", "5vnq.cif", wavelength_band=[2, 4], min_d=6)
+#generate_peaks("MANDI", "sucrose.cif", wavelength_band=[2, 4], min_d=1)

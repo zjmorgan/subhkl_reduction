@@ -1,14 +1,20 @@
+import os
+import re
+
 import numpy as np
 
+from h5py import File
 from PIL import Image
 
 import skimage.feature
 import scipy.optimize
 
+from subhkl.config import beamlines
 
-class FindPeaks:
 
-    def __init__(self, filename):
+class Peaks:
+
+    def __init__(self, filename, instrument):
         """
         Find peaks from an image.
 
@@ -19,14 +25,53 @@ class FindPeaks:
 
         """
 
-        self.im = np.array(Image.open(filename))
+        name, ext = os.path.splitext(filename)
 
-    def harvest_peaks(self, min_pix=50, min_rel_intens=0.5):
+        self.instrument = instrument
+
+        if ext == ".h5":
+            self.ims = self.load_nexus(filename)
+        else:
+            self.ims = {0: np.array(Image.open(filename)).T}
+
+    def load_nexus(self, filename):
+
+        detectors = beamlines[self.instrument]
+
+        ims = {}
+
+        with File(filename, "r") as f:
+            keys = f["/entry/"].keys()
+            banks = [key for key in keys if re.search(r"bank\d", key)]
+
+            for bank in banks:
+
+                key = "/entry/" + bank + "/event_id"
+
+                b = int(bank.split("bank")[1].split("_")[0])
+
+                array = f[key][()]
+
+                det = detectors.get(b)
+
+                if det is not None:
+
+                    m, n, offset = det["m"], det["n"], det["offset"]
+
+                    bc = np.bincount(array - offset, minlength=m * n)
+
+                    ims[b] = bc.reshape(m, n)
+
+        return ims
+
+    def harvest_peaks(self, bank, max_peaks=200, min_pix=50, min_rel_intens=0.5):
         """
         Locate peak positions in pixel coordinates.
 
         Parameters
         ----------
+        bank : int
+            Bank number.
         min_pix : int, optional
             Minimum pixel distance between peaks. The default is 50.
         min_rel_intens: float, optional
@@ -34,26 +79,32 @@ class FindPeaks:
 
         Returns
         -------
-        xp : array, int
+        i : array, int
             x-pixel coordinates.
-        yp : array, int
+        j : array, int
             y-pixel coordinates.
 
         """
 
         coords = skimage.feature.peak_local_max(
-            self.im, min_distance=min_pix, threshold_rel=min_rel_intens
+            self.ims[bank],
+            num_peaks=max_peaks,
+            min_distance=min_pix,
+            threshold_rel=min_rel_intens,
+            exclude_border=min_pix*3,
         )
 
-        return coords[:, 1], coords[:, 0]
+        return coords[:, 0], coords[:, 1]
 
-    def scale_coordinates(self, xp, yp, scale_x, scale_y):
+    def scale_coordinates(self, bank, i, j):
         """
         Scale from pixel coordinates to real positions.
 
         Parameters
         ----------
-        xp, yp : array, int
+        bank : int
+            Bank number.
+        i, j : array, int
             Image coordinates.
         scale_x, scale_y : float
             Pixel scaling factors.
@@ -65,9 +116,11 @@ class FindPeaks:
 
         """
 
-        ny, nx = self.im.shape
+        width, height = self.detector_width_height(bank)
 
-        return (xp - nx / 2) * scale_x, (yp - ny / 2) * scale_y
+        m, n = self.ims[bank].shape
+
+        return (i / (m - 1) - 0.5) * width, (j / (n - 1) - 0.5) * height
 
     def scale_ellipsoid(self, a, b, theta, scale_x, scale_y):
         """
@@ -89,7 +142,12 @@ class FindPeaks:
 
         """
 
-        R = np.array([[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]])
+        R = np.array(
+            [[np.cos(theta), -np.sin(theta)], [np.sin(theta), np.cos(theta)]]
+        )
+
+        if np.isclose(a, 0) or np.isclose(b, 0):
+            return 0, 0, 0
 
         S_inv = np.diag([1 / scale_x, 1 / scale_y])
 
@@ -106,76 +164,142 @@ class FindPeaks:
 
         return new_a, new_b, new_theta
 
-    def flat_panel(self, x, y, d, h, gamma=0):
-        """
-        Place a flat detector image into 3d-spatial coordinates.
+    def detector_width_height(self, bank):
 
-        Parameters
-        ----------
-        x, y : array, float
-            Image pixel position.
-        d : float
-            Horizontal detector distance.
-        h : float
-            Vertical detector height.
-        gamma : float, optional
-            Image orientation. The default is 0.
+        detector = beamlines[self.instrument][bank]
 
-        Returns
-        -------
-        X, Y, Z : array, float
-            Spatial positions.
+        width = detector["width"]
+        height = detector["height"]
 
-        """
+        return width, height
 
-        X = x * np.cos(gamma) + d * np.sin(gamma)
-        Y = y + h
-        Z = d * np.cos(gamma) - x * np.sin(gamma)
+    def transform_from_detector(self, bank, i, j):
 
-        return X, Y, Z
+        detector = beamlines[self.instrument][bank]
 
-    def curved_panel(self, x, y, d, h, gamma=0):
-        """
-        Place a curved detector image into 3d-spatial coordinates.
+        m = detector["m"]
+        n = detector["n"]
 
-        Parameters
-        ----------
-        x, y : array, float
-            Image pixel position.
-        d : float
-            Horizontal detector distance.
-        h : float
-            Vertical detector height.
-        gamma : float, optional
-            Image orientation. The default is 0.
+        width = detector["width"]
+        height = detector["height"]
 
-        Returns
-        -------
-        X, Y, Z : array, float
-            Spatial positions.
+        c = np.array(detector["center"])
+        vhat = np.array(detector["vhat"])
 
-        """
+        u = np.array(i) / (m - 1) * width
+        v = np.array(j) / (n - 1) * height
 
-        X = d * np.sin(x / d)
-        Y = y + h
-        Z = d * np.cos(x / d)
+        dv = np.einsum("n,d->nd", v, vhat)
 
-        return X, Y, Z
+        if detector["panel"] == "flat":
 
-    def detector_trajectories(self, x, y, d, h, gamma, panel="curved"):
+            uhat = np.array(detector["uhat"])
+
+            du = np.einsum("n,d->nd", u, uhat)
+
+        else:
+
+            radius = detector["radius"]
+            rhat = np.array(detector["rhat"])
+
+            w = np.cross(vhat, rhat)
+
+            dvr = np.einsum("n,d->nd", radius * np.sin(u / radius), w)
+            dr = np.einsum("n,d->nd", radius * (np.cos(u / radius) - 1), rhat)
+
+            du = dr + dvr
+
+        return (c + du + dv).T
+
+    def transform_to_detector(self, bank, X, Y, Z):
+
+        p = np.array([X, Y, Z])
+
+        detector = beamlines[self.instrument][bank]
+
+        m = detector["m"]
+        n = detector["n"]
+
+        width = detector["width"]
+        height = detector["height"]
+
+        c = np.array(detector["center"])
+        vhat = np.array(detector["vhat"])
+
+        dw = width / (m - 1)
+        dh = height / (n - 1)
+
+        j = np.clip(np.dot(p.T - c, vhat) / dh, 0, n)
+
+        if detector["panel"] == "flat":
+
+            uhat = np.array(detector["uhat"])
+
+            i = np.clip(np.dot(p.T - c, uhat) / dw, 0, m)
+
+        else:
+
+            radius = detector["radius"]
+            rhat = np.array(detector["rhat"])
+
+            d = p.T - c - (np.dot(p.T - c, vhat)[:,np.newaxis] * vhat)
+
+            what = np.cross(vhat, rhat)
+
+            dt = 2*np.arctan(-np.dot(d, rhat) / np.dot(d, what))
+            dt = np.mod(dt, 2*np.pi)
+
+            i = np.clip(dt * (radius / dw), 0, m)
+
+        return i.astype(int), j.astype(int)
+
+    def reflections_mask(self, bank, xyz):
+        x, y, z = xyz
+
+        detector = beamlines[self.instrument][bank]
+
+        m = detector["m"]
+        n = detector["n"]
+
+        c = np.array(detector["center"])
+        vhat = np.array(detector["vhat"])
+
+        if detector["panel"] == "flat":
+
+            uhat = np.array(detector["uhat"])
+            norm = np.cross(uhat, vhat)
+
+            d = np.einsum("i,in->n", norm, [x, y, z])
+            t = np.dot(c, norm) / d
+
+        else:
+
+            radius = detector["radius"]
+
+            d = np.einsum("i,in->n", vhat, [x, y, z])
+
+            norm = np.sqrt((x-d*vhat[0])**2 + (y-d*vhat[1])**2 + (z-d*vhat[2])**2)
+
+            t = radius/norm
+
+        X, Y, Z = t * x, t * y, t * z
+
+        i, j = self.transform_to_detector(bank, X, Y, Z)
+
+        mask = (i > 0) & (j > 0) & (i < m - 1) & (j < n - 1) & (t > 0)
+
+        return mask, i, j
+
+    def detector_trajectories(self, bank, x, y):
         """
         Calculate detector trajectories.
 
         Parameters
         ----------
+        bank : int
+            Bank number.
         x, y : array, float
             Pixel position in physical units.
-        d : float
-            Horizontal detector distance.
-        h : float
-            Vertical detector height.
-        gamma : float, optional
-            Image orientation. The default is 0.
 
         Returns
         -------
@@ -186,10 +310,7 @@ class FindPeaks:
 
         """
 
-        if panel == "curved":
-            X, Y, Z = self.curved_panel(x, y, d, h, gamma)
-        else:
-            X, Y, Z = self.flat_panel(x, y, d, h, gamma)
+        X, Y, Z = self.transform_from_detector(bank, x, y)
 
         R = np.sqrt(X**2 + Y**2 + Z**2)
         two_theta = np.rad2deg(np.arccos(Z / R))
@@ -199,15 +320,23 @@ class FindPeaks:
 
     def peak(self, x, y, A, B, mu_x, mu_y, sigma_1, sigma_2, theta):
 
-        a = 0.5 * (np.cos(theta) ** 2 / sigma_1**2 + np.sin(theta) ** 2 / sigma_2**2)
-        b = 0.5 * (np.sin(theta) ** 2 / sigma_1**2 + np.cos(theta) ** 2 / sigma_2**2)
+        a = 0.5 * (
+            np.cos(theta) ** 2 / sigma_1**2 + np.sin(theta) ** 2 / sigma_2**2
+        )
+        b = 0.5 * (
+            np.sin(theta) ** 2 / sigma_1**2 + np.cos(theta) ** 2 / sigma_2**2
+        )
         c = 0.5 * (1 / sigma_1**2 - 1 / sigma_2**2) * np.sin(2 * theta)
 
         shape = np.exp(
-            -(a * (x - mu_x) ** 2 + b * (y - mu_y) ** 2 + c * (x - mu_x) * (y - mu_y))
+            -(
+                a * (x - mu_x) ** 2
+                + b * (y - mu_y) ** 2
+                + c * (x - mu_x) * (y - mu_y)
+            )
         )
 
-        return A * shape + B  # /(2*np.pi*sigma_1*sigma_2)
+        return A * shape + B
 
     def residual(self, params, x, y, z):
 
@@ -217,29 +346,49 @@ class FindPeaks:
 
         sigma_x = np.hypot(sigma_1 * np.cos(theta), sigma_2 * np.sin(theta))
         sigma_y = np.hypot(sigma_1 * np.sin(theta), sigma_2 * np.cos(theta))
-        rho = (sigma_1**2 - sigma_2**2) * np.sin(2 * theta) / (2 * sigma_x * sigma_y)
+        rho = (
+            (sigma_1**2 - sigma_2**2)
+            * np.sin(2 * theta)
+            / (2 * sigma_x * sigma_y)
+        )
 
         return sigma_x, sigma_y, rho
+
+    def intensity(self, A, B, sigma1, sigma2,  cov_matrix):
+
+        I = A * 2 * np.pi * sigma1 * sigma2 - B
+    
+        dI = np.array([
+            2 * np.pi * sigma1 * sigma2,
+            -1,
+            2 * np.pi * A * sigma2,
+            2 * np.pi * A * sigma1,
+        ])
+    
+        sigma = np.sqrt(dI @ cov_matrix @ dI.T)
+    
+        return I, sigma
 
     def fit(self, xp, yp, im, roi_pixels=50):
 
         peak_dict = {}
 
-        Y, X = np.meshgrid(
+        X, Y = np.meshgrid(
             np.arange(im.shape[0]), np.arange(im.shape[1]), indexing="ij"
         )
 
         for ind, (x_val, y_val) in enumerate(zip(xp[:], yp[:])):
 
-            y_min = int(max(y_val - roi_pixels, 0))
-            y_max = int(min(y_val + roi_pixels + 1, im.shape[0]))
             x_min = int(max(x_val - roi_pixels, 0))
-            x_max = int(min(x_val + roi_pixels + 1, im.shape[1]))
+            x_max = int(min(x_val + roi_pixels + 1, im.shape[0]))
 
-            x = X[y_min:y_max, x_min:x_max].copy()
-            y = Y[y_min:y_max, x_min:x_max].copy()
+            y_min = int(max(y_val - roi_pixels, 0))
+            y_max = int(min(y_val + roi_pixels + 1, im.shape[1]))
 
-            z = im[y_min:y_max, x_min:x_max].copy()
+            x = X[x_min:x_max, y_min:y_max].copy()
+            y = Y[x_min:x_max, y_min:y_max].copy()
+
+            z = im[x_min:x_max, y_min:y_max].copy()
 
             x0 = (
                 z.max(),
@@ -284,8 +433,20 @@ class FindPeaks:
 
             if np.linalg.det(inv_cov) > 0:
 
-                A, B, mu_x, mu_y, sigma_1, sigma_2, theta = sol.x
+                A, B, mu_1, mu_2, sigma_1, sigma_2, theta = sol.x
 
-                peak_dict[(x_val, y_val)] = mu_x, mu_y, sigma_1, sigma_2, theta
+                inds = [0, 1, 4, 5]
+
+                cov = np.linalg.inv(inv_cov)[inds][:,inds]
+
+                I, sig = self.intensity(A, B, sigma_1, sigma_2, cov)
+
+                if I < 3 * sig:
+                    mu_1, mu_2 = x_val, y_val
+                    sigma_1, sigma_2, theta = 0., 0., 0.
+
+                items = mu_1, mu_2, sigma_1, sigma_2, theta
+
+                peak_dict[(x_val, y_val)] = items
 
         return peak_dict

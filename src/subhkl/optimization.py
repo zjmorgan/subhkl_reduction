@@ -2,8 +2,6 @@ import os
 
 os.environ["OMP_NUM_THREADS"] = "1"
 
-import h5py
-
 from functools import partial
 
 import numpy as np
@@ -13,7 +11,7 @@ import scipy.spatial
 import scipy.interpolate
 
 
-class FindUB:
+class UB:
     """
     Optimizer of crystal orientation from peaks and known lattice parameters.
 
@@ -26,50 +24,81 @@ class FindUB:
 
     """
 
-    def __init__(self, filename=None):
+    def __init__(self, a, b, c, alpha, beta, gamma):
         """
         Find :math:`UB` from peaks.
 
         Parameters
         ----------
-        filename : str, optional
-            Filename of found peaks. The default is None.
+        a, b, c : float
+            Lattice constants in angstroms.
+        alpha, beta, gamma : float
+            Lattice angles in degrees.
 
         """
 
-        if filename is not None:
-            self.load_peaks(filename)
+        self.a = a
+        self.b = b
+        self.c = c
+        self.alpha = alpha
+        self.beta = beta
+        self.gamma = gamma
 
         t = np.linspace(0, np.pi, 1024)
         cdf = (t - np.sin(t)) / np.pi
 
         self._angle = scipy.interpolate.interp1d(cdf, t, kind="linear")
 
-    def load_peaks(self, filename):
-        """
-        Obtain peak information from .h5 file.
+    def allow_centering(self, h, k, l, centering="P"):
 
-        Parameters
-        ----------
-        filename : str
-            HDF5 file of peak information.
+        self.centering = centering        
 
-        """
+        if self.centering == "P":
+            mask = np.full_like(l, True)
+        elif self.centering == "A":
+            mask = (k + l) % 2 == 0
+        elif self.centering == "B":
+            mask = (h + l) % 2 == 0
+        elif self.centering == "C":
+            mask = (h + k) % 2 == 0
+        elif self.centering == "I":
+            mask = (h + k + l) % 2 == 0
+        elif self.centering == "F":
+            mask = ((h + k) % 2 == 0) & ((h + l) % 2 == 0) & ((k + l) % 2 == 0)
+        elif self.centering == "R":
+            mask = (h + k + l) % 3 == 0
 
-        with h5py.File(os.path.abspath(filename), "r") as f:
+        return h[mask], k[mask], l[mask]
 
-            self.a = f["sample/a"][()]
-            self.b = f["sample/b"][()]
-            self.c = f["sample/c"][()]
-            self.alpha = f["sample/alpha"][()]
-            self.beta = f["sample/beta"][()]
-            self.gamma = f["sample/gamma"][()]
-            self.wavelength = f["instrument/wavelength"][()]
-            self.R = f["goniometer/R"][()]
-            self.two_theta = f["peaks/scattering"][()]
-            self.az_phi = f["peaks/azimuthal"][()]
-            self.centering = f["sample/centering"][()].decode("utf-8")
-            self.cell = f["sample/cell"][()].decode("utf-8")
+    def reflections(self, centering="P", d_min=2):
+
+        a, b, c, alpha, beta, gamma = self.get_lattice_constants()
+
+        constants = a, b, c, *np.deg2rad([alpha, beta, gamma])
+        B, Gstar = self.cartesian_matrix_metric_tensor(*constants)
+
+        astar, bstar, cstar = np.sqrt(np.diag(Gstar))
+
+        h_max = int(np.floor(1 / d_min / astar))
+        k_max = int(np.floor(1 / d_min / bstar))
+        l_max = int(np.floor(1 / d_min / cstar))
+
+        h, k, l = np.meshgrid(
+            np.arange(-h_max, h_max + 1),
+            np.arange(-k_max, k_max + 1),
+            np.arange(-l_max, l_max + 1),
+            indexing="ij",
+        )
+
+        hkl = [h.flatten(), k.flatten(), l.flatten()]
+
+        h, k, l = hkl
+
+        d = 1 / np.sqrt(np.einsum("ij,jl,il->l", Gstar, hkl, hkl))
+
+        mask = (d > d_min) & (d < np.inf)
+
+        return self.allow_centering(h[mask], k[mask], l[mask], centering)
 
     def uncertainty_line_segements(self):
         """
@@ -89,7 +118,7 @@ class FindUB:
             [np.sin(tt) * np.cos(az), np.sin(tt) * np.sin(az), np.cos(tt) - 1]
         )
 
-        return kf_ki_dir
+        return np.einsum("nji,jn->in", self.R, kf_ki_dir)
 
     def metric_G_tensor(self):
         """
@@ -165,7 +194,11 @@ class FindUB:
         phi = 2 * np.pi * u1
 
         w = np.array(
-            [np.sin(theta) * np.cos(phi), np.sin(theta) * np.sin(phi), np.cos(theta)]
+            [
+                np.sin(theta) * np.cos(phi),
+                np.sin(theta) * np.sin(phi),
+                np.cos(theta),
+            ]
         )
 
         omega = self._angle(u2)
@@ -184,8 +217,8 @@ class FindUB:
             3x3 sample oriented lattice matrix.
         kf_ki_dir : list
             Difference between scattering and incident beam directions.
-        wavelength : list, float
-            Bandwidth.
+        wavelength : list
+            Bandwidth of each reflection.
         tol : float, optional
             Indexing tolerance. Default is `0.15`.
 
@@ -202,15 +235,17 @@ class FindUB:
 
         """
 
-        wl_min, wl_max = wavelength
+        wl_min, wl_max = np.array(wavelength).T
+
+        x = np.linspace(0, 1, 100)
+
+        lamda = wl_min[:, None] + (wl_max - wl_min)[:, None] * x[None, :]
 
         UB_inv = np.linalg.inv(UB)
 
         hkl_lamda = np.einsum("ij,jk", UB_inv, kf_ki_dir)
 
-        lamda = np.linspace(wl_min, wl_max, 100)
-
-        hkl = hkl_lamda[:, :, np.newaxis] / lamda
+        hkl = hkl_lamda[:, :, np.newaxis] / lamda[np.newaxis, :, :]
 
         s = np.einsum("ij,j...->i...", UB, hkl)
         s = np.linalg.norm(s, axis=0)
@@ -225,7 +260,7 @@ class FindUB:
         err = dist[np.arange(dist.shape[0]), ind]
 
         hkl = hkl[:, np.arange(hkl_lamda.shape[1]), ind]
-        lamda = lamda[ind]
+        lamda = lamda[np.arange(lamda.shape[0]), ind]
 
         hkl = hkl_lamda / lamda
         int_hkl = np.round(hkl)
@@ -319,7 +354,7 @@ class FindUB:
 
         return np.array(results)
 
-    def minimize(self, n_proc=-1):
+    def minimize(self, R, two_theta, az_phi, wavelength, n_proc=-1):
         """
         Fit the orientation and other parameters.
 
@@ -339,6 +374,11 @@ class FindUB:
 
         """
 
+        self.R = R
+        self.two_theta = two_theta
+        self.az_phi = az_phi
+        self.wavelength = wavelength
+
         self.x = scipy.optimize.differential_evolution(
             self.objective,
             [(0, 1), (0, 1), (0, 1)],
@@ -347,6 +387,15 @@ class FindUB:
             workers=-1,
         ).x
 
+        self.index(R, two_theta, az_phi, wavelength)
+
+    def index(self, R, two_theta, az_phi, wavelength):
+
+        self.R = R
+        self.two_theta = two_theta
+        self.az_phi = az_phi
+        self.wavelength = wavelength        
+
         kf_ki_dir = self.uncertainty_line_segements()
 
         B = self.reciprocal_lattice_B()
@@ -354,7 +403,7 @@ class FindUB:
 
         UB = self.UB_matrix(U, B)
 
-        return self.indexer(UB, kf_ki_dir, self.wavelength)
+        return self.indexer(UB, kf_ki_dir, wavelength)
 
     def cubic(self, x):
 
@@ -475,13 +524,49 @@ class FindUB:
 
         return B, Gstar
 
-    def refine(self, error=0.05):
+    def coverage(self, h, k, l, wavelength, tol=1e-3):
+
+        wl_min, wl_max = wavelength
+
+        B = self.reciprocal_lattice_B()
+        U = self.orientation_U(*self.x)
+        UB = self.UB_matrix(U, B)
+
+        hkl = [h, k, l]
+
+        Qx, Qy, Qz = np.einsum("ij,jk->ik", 2 * np.pi * UB, hkl)
+        Q = np.sqrt(Qx**2 + Qy**2 + Qz**2)
+
+        lamda = -4 * np.pi * Qz / Q**2
+        mask = np.logical_and(lamda > wl_min, lamda < wl_max)
+
+        Qx, Qy, Qz, Q = Qx[mask], Qy[mask], Qz[mask], Q[mask]
+
+        h, k, l, lamda = h[mask], k[mask], l[mask], lamda[mask]
+
+        tt = -2 * np.arcsin(Qz / Q)
+        az = np.arctan2(Qy, Qx)
+
+        x = np.sin(tt) * np.cos(az)
+        y = np.sin(tt) * np.sin(az)
+        z = np.cos(tt)
+
+        coords = np.vstack((x, y, z)).T
+        rounded = np.round(coords / tol).astype(int)
+
+        _, ind, mult = np.unique(rounded, axis=0, return_index=True, return_counts=True)
+
+        return [x[ind], y[ind], z[ind]], [h[ind], k[ind], l[ind]], lamda[ind], mult
+
+    def refine(self, cell="Triclinic", error=0.05):
         """
         Refine the orientation and lattice parameters under constraints.
 
         """
 
         a, b, c, alpha, beta, gamma = self.get_lattice_constants()
+
+        self.cell = cell
 
         fun_dict = {
             "Cubic": self.cubic,
