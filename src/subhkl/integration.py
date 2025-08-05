@@ -357,16 +357,16 @@ class Peaks:
     def intensity(self, A, B, sigma1, sigma2,  cov_matrix):
 
         I = A * 2 * np.pi * sigma1 * sigma2 - B
-    
+
         dI = np.array([
             2 * np.pi * sigma1 * sigma2,
             -1,
             2 * np.pi * A * sigma2,
             2 * np.pi * A * sigma1,
         ])
-    
+
         sigma = np.sqrt(dI @ cov_matrix @ dI.T)
-    
+
         return I, sigma
 
     def fit(self, xp, yp, im, roi_pixels=50):
@@ -390,17 +390,17 @@ class Peaks:
 
             z = im[x_min:x_max, y_min:y_max].copy()
 
-            x0 = (
+            x0 = np.array([
                 z.max(),
                 z.min(),
                 x_val,
                 y_val,
-                roi_pixels * 0.25,
-                roi_pixels * 0.25,
+                roi_pixels / 6,
+                roi_pixels / 6,
                 0,
-            )
+            ])
 
-            xmin = (
+            xmin = np.array([
                 z.min(),
                 0,
                 x_val - roi_pixels * 0.5,
@@ -408,45 +408,47 @@ class Peaks:
                 1,
                 1,
                 -np.pi / 2,
-            )
+            ])
 
-            xmax = (
+            xmax = np.array([
                 2 * z.max(),
                 z.mean(),
                 x_val + roi_pixels * 0.5,
                 y_val + roi_pixels * 0.5,
-                roi_pixels,
-                roi_pixels,
+                roi_pixels / 3,
+                roi_pixels / 3,
                 np.pi / 2,
-            )
+            ])
 
-            bounds = np.array([xmin, xmax])
+            if np.all(x0 > xmin) and np.all(x0 < xmax):
 
-            args = (x, y, z)
+                bounds = np.array([xmin, xmax])
 
-            sol = scipy.optimize.least_squares(
-                self.residual, x0=x0, bounds=bounds, args=args
-            )
+                args = (x, y, z)
 
-            J = sol.jac
-            inv_cov = J.T.dot(J)
+                sol = scipy.optimize.least_squares(
+                    self.residual, x0=x0, bounds=bounds, args=args, loss='soft_l1'
+                )
 
-            if np.linalg.det(inv_cov) > 0:
+                J = sol.jac
+                inv_cov = J.T.dot(J)
 
-                A, B, mu_1, mu_2, sigma_1, sigma_2, theta = sol.x
+                if np.linalg.det(inv_cov) > 0:
 
-                inds = [0, 1, 4, 5]
+                    A, B, mu_1, mu_2, sigma_1, sigma_2, theta = sol.x
 
-                cov = np.linalg.inv(inv_cov)[inds][:,inds]
+                    inds = [0, 1, 4, 5]
 
-                I, sig = self.intensity(A, B, sigma_1, sigma_2, cov)
+                    cov = np.linalg.inv(inv_cov)[inds][:,inds]
 
-                if I < 3 * sig:
-                    mu_1, mu_2 = x_val, y_val
-                    sigma_1, sigma_2, theta = 0., 0., 0.
+                    I, sig = self.intensity(A, B, sigma_1, sigma_2, cov)
 
-                items = mu_1, mu_2, sigma_1, sigma_2, theta
+                    if I < 10 * sig:
+                        mu_1, mu_2 = x_val, y_val
+                        sigma_1, sigma_2, theta = 0., 0., 0.
 
-                peak_dict[(x_val, y_val)] = items
+                    items = mu_1, mu_2, sigma_1, sigma_2, theta
+
+                    peak_dict[(x_val, y_val)] = items
 
         return peak_dict
